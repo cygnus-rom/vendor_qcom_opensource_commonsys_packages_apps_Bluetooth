@@ -200,7 +200,7 @@ public class AdapterService extends Service {
 
     private static final int CONTROLLER_ENERGY_UPDATE_TIMEOUT_MILLIS = 30;
     private static final int DELAY_A2DP_SLEEP_MILLIS = 100;
-
+    private static final int TYPE_BREDR = 100;
     private final ArrayList<DiscoveringPackage> mDiscoveringPackages = new ArrayList<>();
 
     static {
@@ -556,6 +556,15 @@ public class AdapterService extends Service {
     public void onCreate() {
         super.onCreate();
         debugLog("onCreate()");
+
+        Log.i(TAG, "Current user: " + ActivityManager.getCurrentUser() +
+                  " Owner user: " + UserHandle.myUserId());
+        if (ActivityManager.getCurrentUser() != UserHandle.myUserId())
+        {
+            Log.i(TAG, "Not match with current user. Quit...");
+            System.exit(0);
+        }
+
         mAdapter = BluetoothAdapter.getDefaultAdapter();
         mRemoteDevices = new RemoteDevices(this, Looper.getMainLooper());
         mRemoteDevices.init();
@@ -566,7 +575,11 @@ public class AdapterService extends Service {
         mAdapterStateMachine =  AdapterState.make(this);
         mJniCallbacks = new JniCallbacks(this, mAdapterProperties);
         mVendorSocket = new VendorSocket(this);
-        initNative(isGuest(), isSingleUserMode());
+        int configCompareResult = 0;
+        // Android TV doesn't show consent dialogs for just works and encryption only le pairing
+        boolean isAtvDevice = getApplicationContext().getPackageManager().hasSystemFeature(
+                PackageManager.FEATURE_LEANBACK_ONLY);
+        initNative(isGuest(), isSingleUserMode(), configCompareResult, isAtvDevice);
         mNativeAvailable = true;
         mCallbacks = new RemoteCallbackList<IBluetoothCallback>();
         mAppOps = getSystemService(AppOpsManager.class);
@@ -692,6 +705,19 @@ public class AdapterService extends Service {
                 int fuid = intent.getIntExtra(Intent.EXTRA_USER_HANDLE, 0);
                 Utils.setForegroundUserId(fuid);
                 setForegroundUserIdNative(fuid);
+
+                Log.i(TAG, "User switched: Current user: " + ActivityManager.getCurrentUser() +
+                      " Owner user: " + UserHandle.myUserId());
+                if (ActivityManager.getCurrentUser() != UserHandle.myUserId()) {
+                    Log.i(TAG, "Not match with current user. Quit...");
+                    if (getAdapterService() != null) {
+                        /* Stop all profile services before quit */
+                        Log.i(TAG, "ssrCleanupCallback");
+                        getAdapterService().ssrCleanupCallback();
+                    } else {
+                        System.exit(0);
+                    }
+                }
             }
         }
     };
@@ -2374,6 +2400,9 @@ public class AdapterService extends Service {
 
             return service.startClockSync();
         }
+
+        @Override
+        public int getDeviceType(BluetoothDevice device) { return TYPE_BREDR; }
 
         @Override
         public void dump(FileDescriptor fd, String[] args) {
@@ -4240,7 +4269,8 @@ public class AdapterService extends Service {
 
     static native void classInitNative();
 
-    native boolean initNative(boolean startRestricted, boolean isSingleUserMode);
+    native boolean initNative(boolean startRestricted, boolean isSingleUserMode,
+                              int configCompareResult, boolean isAtvDevice);
 
     native void cleanupNative();
 
